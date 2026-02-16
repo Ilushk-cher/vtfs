@@ -59,6 +59,14 @@ struct dentry *vtfs_mount(struct file_system_type *fs_type, int flags, const cha
 void vtfs_kill_sb(struct super_block *sb);
 int vtfs_fill_super(struct super_block *sb, void *data, int silent);
 
+/* HTTP push operations */
+int vtfs_push_mkdir(ino_t pino, const char *name, ino_t ino);
+int vtfs_push_create(ino_t pino, const char *name, ino_t ino);
+int vtfs_push_unlink(ino_t pino, const char *name);
+int vtfs_push_rmdir(ino_t pino, const char *name);
+int vtfs_push_truncate(ino_t ino, size_t sz);
+int vtfs_push_write(ino_t ino, size_t off, const char *buf, size_t len);
+
 /* VFS operations declarations */
 extern const struct file_operations vtfs_file_ops;
 extern const struct inode_operations vtfs_inode_ops;

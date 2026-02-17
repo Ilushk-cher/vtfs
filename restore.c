@@ -1,9 +1,6 @@
 // restore.c — Restore filesystem state from server on mount
 
-#include <linux/slab.h>
-#include <linux/string.h>
 #include "vtfs.h"
-#include "http.h"
 
 static int vtfs_parse_mode(const char *s, umode_t *out)
 {
@@ -85,6 +82,7 @@ int vtfs_restore_from_server(struct super_block *sb, int *out_restored)
   int64_t rc;
   char *p, *line;
   int restored = 0;
+  struct inode *inode;
 
   if (out_restored)
     *out_restored = 0;
@@ -108,6 +106,7 @@ int vtfs_restore_from_server(struct super_block *sb, int *out_restored)
     char *t, *ino_s, *pino_s, *name, *mode_s, *size_s, *target_s;
     ino_t ino, pino, target;
     struct vtfs_node *parent, *n, *target_node;
+    umode_t mode;
 
     if (!line[0])
       continue;
@@ -134,19 +133,25 @@ int vtfs_restore_from_server(struct super_block *sb, int *out_restored)
       continue;
 
     if (t[0] == 'D') {
-      umode_t m = 0777;
+      mode = 0777;
       mode_s = strsep(&line, "\t");
       if (mode_s)
-        vtfs_parse_mode(mode_s, &m);
+        vtfs_parse_mode(mode_s, &mode);
 
       n = vtfs_alloc_node_ino(parent, name, true, ino);
-      if (n)
-        restored++;
+      if (!n)
+        continue;
+
+      inode = vtfs_iget(sb, NULL, S_IFDIR | mode, n->ino);
+      if (inode)
+        iput(inode);
+
+      restored++;
       continue;
     }
 
     if (t[0] == 'F') {
-      umode_t m = 0777;
+      mode = 0777;
       size_t sz = 0;
 
       mode_s = strsep(&line, "\t");
@@ -154,8 +159,44 @@ int vtfs_restore_from_server(struct super_block *sb, int *out_restored)
       if (!mode_s || !size_s)
         continue;
 
-      vtfs_parse_mode(mode_s, &m);
+      vtfs_parse_mode(mode_s, &mode);
       sz = (size_t)simple_strtoul(size_s, NULL, 10);
+
+      target_node = vtfs_find_any_node(sb, ino);
+      if (target_node) {
+        LOG("restore: inode %lu already exists, creating hardlink\n", (unsigned long)ino);
+        
+        n = kzalloc(sizeof(*n), GFP_KERNEL);
+        if (!n)
+          continue;
+
+        n->name = kstrdup(name, GFP_KERNEL);
+        if (!n->name) {
+          kfree(n);
+          continue;
+        }
+
+        INIT_LIST_HEAD(&n->sibling);
+        INIT_LIST_HEAD(&n->children);
+
+        n->parent = parent;
+        n->is_dir = false;
+        n->ino = target_node->ino;
+        n->file = target_node->file;
+        
+        atomic_inc(&n->file->nlink);
+        
+        inode = vtfs_iget(sb, NULL, S_IFREG | mode, n->ino);
+        if (inode) {
+          inc_nlink(inode);
+          LOG("restore: inc_nlink for inode %lu, i_nlink=%d\n", 
+              (unsigned long)inode->i_ino, inode->i_nlink);
+        }
+
+        list_add_tail(&n->sibling, &parent->children);
+        restored++;
+        continue;
+      }
 
       n = vtfs_alloc_node_ino(parent, name, false, ino);
       if (!n)
@@ -165,7 +206,19 @@ int vtfs_restore_from_server(struct super_block *sb, int *out_restored)
         vtfs_free_node(n);
         continue;
       }
+      
+      atomic_set(&n->file->nlink, 1);
+      
+      inode = vtfs_iget(sb, NULL, S_IFREG | mode, n->ino);
+      if (inode) {
+        set_nlink(inode, 1);
+        i_size_write(inode, sz);
+        inode->i_blocks = (sz + VTFS_BLOCK_SIZE - 1) >> VTFS_BLOCK_SHIFT;
+        LOG("restore: set_nlink for inode %lu = 1\n", (unsigned long)n->ino);
+      }
+      
       restored++;
+      LOG("restore: created file inode %lu\n", (unsigned long)ino);
       continue;
     }
 
@@ -175,9 +228,10 @@ int vtfs_restore_from_server(struct super_block *sb, int *out_restored)
         continue;
 
       target = (ino_t)simple_strtoul(target_s, NULL, 10);
-      target_node = vtfs_node_from_inode(sb, target);
+      
+      target_node = vtfs_find_any_node(sb, target);
       if (!target_node || target_node->is_dir || !target_node->file) {
-        LOG("restore: link target %lu not found\n", (unsigned long)target);
+        LOG("restore: link target %lu not found, skipping\n", (unsigned long)target);
         continue;
       }
 
@@ -200,11 +254,19 @@ int vtfs_restore_from_server(struct super_block *sb, int *out_restored)
       n->file = target_node->file;
       
       atomic_inc(&n->file->nlink);
+      
+      inode = vtfs_iget(sb, NULL, S_IFREG | 0777, target);
+      if (inode) {
+        inc_nlink(inode);
+        LOG("restore: inc_nlink for inode %lu, i_nlink=%d\n", 
+            (unsigned long)target, inode->i_nlink);
+      }
 
       list_add_tail(&n->sibling, &parent->children);
       restored++;
       
-      LOG("restore: added hardlink '%s' -> inode %lu\n", name, (unsigned long)target);
+      LOG("restore: added hardlink '%s' -> inode %lu (nlink=%d)\n", 
+          name, (unsigned long)target, atomic_read(&n->file->nlink));
       continue;
     }
   }

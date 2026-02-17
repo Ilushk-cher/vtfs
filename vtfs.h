@@ -1,17 +1,26 @@
 #ifndef _VTFS_H
 #define _VTFS_H
 
+#include <linux/mount.h>
+#include <linux/pagemap.h>
+#include <linux/string.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/atomic.h>
 #include <linux/list.h>
+#include "http.h"
 
 #define MODULE_NAME "vtfs"
 #define ROOT_DIR 1000
 #define VTFS_NAME_MAX 255
 #define VTFS_CHUNK 4096
 #define VTFS_MAGIC 0x56544653
+
+#define VTFS_BLOCK_SIZE 512
+#define VTFS_BLOCK_SHIFT 9
 
 #define LOG(fmt, ...) pr_info("[" MODULE_NAME "]: " fmt, ##__VA_ARGS__)
 
@@ -42,10 +51,12 @@ extern ino_t next_ino;
 /* Node operations */
 struct vtfs_node *vtfs_root(struct super_block *sb);
 struct vtfs_node *vtfs_node_from_inode(struct super_block *sb, ino_t ino);
+struct vtfs_node *vtfs_find_any_node(struct super_block *sb, ino_t ino);
 struct vtfs_node *vtfs_find_child(struct vtfs_node *dir, const char *name);
 struct vtfs_node *vtfs_alloc_node(struct vtfs_node *parent, const char *name, bool is_dir);
 struct vtfs_node *vtfs_alloc_node_ino(struct vtfs_node *parent, const char *name, bool is_dir, ino_t ino);
 void vtfs_free_subtree(struct vtfs_node *n);
+void vtfs_free_node(struct vtfs_node *n);
 
 /* File operations */
 struct vtfs_file *vtfs_file_alloc(void);
@@ -62,10 +73,15 @@ int vtfs_fill_super(struct super_block *sb, void *data, int silent);
 /* HTTP push operations */
 int vtfs_push_mkdir(ino_t pino, const char *name, ino_t ino);
 int vtfs_push_create(ino_t pino, const char *name, ino_t ino);
+int vtfs_push_link(ino_t pino, const char *name, ino_t target_ino);
 int vtfs_push_unlink(ino_t pino, const char *name);
 int vtfs_push_rmdir(ino_t pino, const char *name);
 int vtfs_push_truncate(ino_t ino, size_t sz);
 int vtfs_push_write(ino_t ino, size_t off, const char *buf, size_t len);
+
+/* Restore operations */
+int vtfs_restore_from_server(struct super_block *sb, int *out_restored);
+int vtfs_load_file_from_server(struct vtfs_file *f, ino_t ino, size_t size);
 
 /* VFS operations declarations */
 extern const struct file_operations vtfs_file_ops;

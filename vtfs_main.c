@@ -1,8 +1,5 @@
 // vtfs_main.c — Module initialization and filesystem registration
 
-#include <linux/init.h>
-#include <linux/module.h>
-#include <linux/fs.h>
 #include "vtfs.h"
 
 MODULE_LICENSE("GPL");

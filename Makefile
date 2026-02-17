@@ -1,5 +1,5 @@
 obj-m += vtfs.o 
-vtfs-objs := vtfs_main.o super.o inode.o dir.o store.o file.o ops.o http.o remote.o
+vtfs-objs := vtfs_main.o super.o inode.o dir.o store.o file.o restore.o ops.o http.o remote.o 
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)

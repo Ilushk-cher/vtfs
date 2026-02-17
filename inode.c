@@ -1,13 +1,13 @@
 // inode.c — Inode operations and management
 
-#include <linux/fs.h>
-#include <linux/slab.h>
 #include "vtfs.h"
 
 struct inode *vtfs_iget(struct super_block *sb, const struct inode *dir,
                         umode_t mode, ino_t ino)
 {
   struct inode *inode = iget_locked(sb, ino);
+  struct vtfs_node *n;
+
   if (!inode)
     return NULL;
 
@@ -23,6 +23,11 @@ struct inode *vtfs_iget(struct super_block *sb, const struct inode *dir,
     inc_nlink(inode);
   } else if (S_ISREG(mode)) {
     inode->i_fop = &vtfs_file_ops;
+    
+    n = vtfs_node_from_inode(sb, ino);
+    if (n && n->file) {
+      inode->i_blocks = (n->file->size + VTFS_BLOCK_SIZE - 1) >> VTFS_BLOCK_SHIFT;
+    }
   }
 
   unlock_new_inode(inode);
@@ -33,11 +38,14 @@ int vtfs_fill_super(struct super_block *sb, void *data, int silent)
 {
   struct inode *inode;
   struct vtfs_node *root;
+  int restored = 0;
 
   (void)silent;
 
   sb->s_magic = VTFS_MAGIC;
   sb->s_op = &vtfs_super_ops;
+  sb->s_blocksize = VTFS_BLOCK_SIZE;
+  sb->s_blocksize_bits = VTFS_BLOCK_SHIFT;
 
   if (data && ((char *)data)[0] != '\0') {
     char *opt = (char *)data;
@@ -70,6 +78,8 @@ int vtfs_fill_super(struct super_block *sb, void *data, int silent)
   if (!sb->s_root)
     return -ENOMEM;
 
+  vtfs_restore_from_server(sb, &restored);
+  LOG("restore: parsed nodes=%d\n", restored);
   pr_info("[" MODULE_NAME "]: vtfs_fill_super: ok (token=%s)\n", vtfs_token);
   return 0;
 }

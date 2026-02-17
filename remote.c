@@ -1,9 +1,6 @@
 // remote.c — HTTP push operations
 
-#include <linux/slab.h>
-#include <linux/string.h>
 #include "vtfs.h"
-#include "http.h"
 
 static int vtfs_enc_name(const char *name, char *out, size_t out_sz)
 {
@@ -43,6 +40,22 @@ int vtfs_push_create(ino_t pino, const char *name, ino_t ino)
 
   r = vtfs_http_call(vtfs_token, "create", NULL, 0, 3,
                      "parent", pino_s, "name", name_enc, "ino", ino_s);
+  return (r == 0) ? 0 : -EIO;
+}
+
+int vtfs_push_link(ino_t pino, const char *name, ino_t target_ino)
+{
+  char pino_s[32], target_ino_s[32];
+  char name_enc[VTFS_NAME_MAX * 3 + 1];
+  int64_t r;
+
+  snprintf(pino_s, sizeof(pino_s), "%lu", (unsigned long)pino);
+  snprintf(target_ino_s, sizeof(target_ino_s), "%lu", (unsigned long)target_ino);
+  if (vtfs_enc_name(name, name_enc, sizeof(name_enc)) != 0)
+    return -ENAMETOOLONG;
+
+  r = vtfs_http_call(vtfs_token, "link", NULL, 0, 3,
+                     "parent", pino_s, "name", name_enc, "target", target_ino_s);
   return (r == 0) ? 0 : -EIO;
 }
 
@@ -98,12 +111,11 @@ int vtfs_push_write(ino_t ino, size_t off, const char *buf, size_t len)
   snprintf(ino_s, sizeof(ino_s), "%lu", (unsigned long)ino);
   snprintf(off_s, sizeof(off_s), "%zu", off);
 
-  encoded = kmalloc(len + 1, GFP_KERNEL);
+  encoded = kmalloc(len * 3 + 1, GFP_KERNEL);
   if (!encoded)
     return -ENOMEM;
 
-  memcpy(encoded, buf, len);
-  encoded[len] = '\0';
+  encode(buf, encoded);
 
   r = vtfs_http_call(vtfs_token, "write", NULL, 0, 3,
                      "ino", ino_s, "off", off_s, "data", encoded);

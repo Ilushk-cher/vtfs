@@ -1,7 +1,5 @@
 // ops.c — Inode operations (create, mkdir, unlink, rmdir, link)
 
-#include <linux/fs.h>
-#include <linux/slab.h>
 #include "vtfs.h"
 
 const struct inode_operations vtfs_inode_ops = {
@@ -19,6 +17,7 @@ int vtfs_create(struct mnt_idmap *idmap, struct inode *parent_inode,
   const char *name = child_dentry->d_name.name;
   struct vtfs_node *parent, *n;
   struct inode *inode;
+  int pr;
 
   (void)idmap;
   (void)excl;
@@ -37,6 +36,10 @@ int vtfs_create(struct mnt_idmap *idmap, struct inode *parent_inode,
   if (!n)
     return -ENOMEM;
 
+  pr = vtfs_push_create(parent->ino, name, n->ino);
+  if (pr)
+    LOG("push create failed: %d\n", pr);
+
   mode = S_IFREG | (mode & 0777);
   if ((mode & 0777) == 0)
     mode = S_IFREG | 0777;
@@ -44,7 +47,7 @@ int vtfs_create(struct mnt_idmap *idmap, struct inode *parent_inode,
   inode = vtfs_iget(parent_inode->i_sb, parent_inode, mode, n->ino);
   if (!inode) {
     list_del(&n->sibling);
-    vtfs_free_subtree(n);
+    vtfs_free_node(n);
     return -ENOMEM;
   }
 
@@ -58,6 +61,7 @@ int vtfs_mkdir(struct mnt_idmap *idmap, struct inode *parent_inode,
   const char *name = child_dentry->d_name.name;
   struct vtfs_node *parent, *n;
   struct inode *inode;
+  int pr;
 
   (void)idmap;
 
@@ -75,6 +79,10 @@ int vtfs_mkdir(struct mnt_idmap *idmap, struct inode *parent_inode,
   if (!n)
     return -ENOMEM;
 
+  pr = vtfs_push_mkdir(parent->ino, name, n->ino);
+  if (pr)
+    LOG("push mkdir failed: %d\n", pr);
+
   mode = S_IFDIR | (mode & 0777);
   if ((mode & 0777) == 0)
     mode = S_IFDIR | 0777;
@@ -82,7 +90,7 @@ int vtfs_mkdir(struct mnt_idmap *idmap, struct inode *parent_inode,
   inode = vtfs_iget(parent_inode->i_sb, parent_inode, mode, n->ino);
   if (!inode) {
     list_del(&n->sibling);
-    vtfs_free_subtree(n);
+    vtfs_free_node(n);
     return -ENOMEM;
   }
 
@@ -96,6 +104,7 @@ int vtfs_unlink(struct inode *parent_inode, struct dentry *child_dentry)
   const char *name = child_dentry->d_name.name;
   struct vtfs_node *parent, *n;
   struct inode *inode = d_inode(child_dentry);
+  int pr;
 
   parent = vtfs_node_from_inode(parent_inode->i_sb, parent_inode->i_ino);
   if (!parent || !parent->is_dir)
@@ -108,13 +117,20 @@ int vtfs_unlink(struct inode *parent_inode, struct dentry *child_dentry)
   if (n->is_dir)
     return -EISDIR;
 
+  pr = vtfs_push_unlink(parent->ino, name);
+  if (pr)
+    LOG("push unlink failed: %d\n", pr);
+
   list_del(&n->sibling);
   d_drop(child_dentry);
 
-  if (inode)
+  if (inode) {
     drop_nlink(inode);
+    if (inode->i_nlink == 0) {
+      vtfs_free_node(n);
+    }
+  }
 
-  vtfs_free_subtree(n);
   return 0;
 }
 
@@ -122,6 +138,7 @@ int vtfs_rmdir(struct inode *parent_inode, struct dentry *child_dentry)
 {
   const char *name = child_dentry->d_name.name;
   struct vtfs_node *parent, *n;
+  int pr;
 
   parent = vtfs_node_from_inode(parent_inode->i_sb, parent_inode->i_ino);
   if (!parent || !parent->is_dir)
@@ -137,9 +154,13 @@ int vtfs_rmdir(struct inode *parent_inode, struct dentry *child_dentry)
   if (!list_empty(&n->children))
     return -ENOTEMPTY;
 
+  pr = vtfs_push_rmdir(parent->ino, name);
+  if (pr)
+    LOG("push rmdir failed: %d\n", pr);
+
   list_del(&n->sibling);
   d_drop(child_dentry);
-  vtfs_free_subtree(n);
+  vtfs_free_node(n);
 
   drop_nlink(parent_inode);
   return 0;
@@ -151,6 +172,7 @@ int vtfs_link(struct dentry *old_dentry, struct inode *parent_dir,
   struct inode *inode = d_inode(old_dentry);
   struct vtfs_node *parent, *target, *newn;
   const char *name = new_dentry->d_name.name;
+  int pr;
 
   if (!inode)
     return -ENOENT;
@@ -192,8 +214,11 @@ int vtfs_link(struct dentry *old_dentry, struct inode *parent_dir,
 
   list_add_tail(&newn->sibling, &parent->children);
 
+  pr = vtfs_push_link(parent->ino, name, target->ino);
+  if (pr)
+    LOG("push link failed: %d\n", pr);
+
   inc_nlink(inode);
-  d_add(new_dentry, inode);
 
   return 0;
 }

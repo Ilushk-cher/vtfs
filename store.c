@@ -1,7 +1,5 @@
 // store.c — RAM tree storage management
 
-#include <linux/slab.h>
-#include <linux/string.h>
 #include "vtfs.h"
 
 struct vtfs_node *vtfs_root(struct super_block *sb)
@@ -19,6 +17,25 @@ static struct vtfs_node *vtfs_dfs_find(struct vtfs_node *n, ino_t ino)
     return n;
 
   list_for_each_entry(c, &n->children, sibling) {
+    r = vtfs_dfs_find(c, ino);
+    if (r)
+      return r;
+  }
+  return NULL;
+}
+
+struct vtfs_node *vtfs_find_any_node(struct super_block *sb, ino_t ino)
+{
+  struct vtfs_node *root = vtfs_root(sb);
+  struct vtfs_node *c, *r;
+
+  if (!root)
+    return NULL;
+
+  if (root->ino == ino)
+    return root;
+
+  list_for_each_entry(c, &root->children, sibling) {
     r = vtfs_dfs_find(c, ino);
     if (r)
       return r;
@@ -122,6 +139,19 @@ struct vtfs_node *vtfs_alloc_node_ino(struct vtfs_node *parent, const char *name
   return n;
 }
 
+void vtfs_free_node(struct vtfs_node *n)
+{
+  if (!n)
+    return;
+
+  if (!n->is_dir) {
+    vtfs_file_put(n->file);
+  }
+
+  kfree(n->name);
+  kfree(n);
+}
+
 void vtfs_free_subtree(struct vtfs_node *n)
 {
   struct vtfs_node *c, *tmp;
@@ -134,9 +164,5 @@ void vtfs_free_subtree(struct vtfs_node *n)
     vtfs_free_subtree(c);
   }
 
-  if (!n->is_dir)
-    vtfs_file_put(n->file);
-
-  kfree(n->name);
-  kfree(n);
+  vtfs_free_node(n);
 }

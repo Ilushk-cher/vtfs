@@ -1,7 +1,5 @@
 // dir.c — Directory operations
 
-#include <linux/fs.h>
-#include <linux/slab.h>
 #include "vtfs.h"
 
 const struct file_operations vtfs_dir_ops = {

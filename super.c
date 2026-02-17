@@ -1,9 +1,5 @@
 // super.c — Superblock operations and mount handling
 
-#include <linux/fs.h>
-#include <linux/mount.h>
-#include <linux/slab.h>
-#include <linux/pagemap.h>
 #include "vtfs.h"
 
 struct dentry *vtfs_mount(struct file_system_type *fs_type, int flags,

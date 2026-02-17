@@ -1,8 +1,5 @@
 // file.c — File operations (open/read/write)
 
-#include <linux/fs.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
 #include "vtfs.h"
 
 const struct file_operations vtfs_file_ops = {
@@ -19,6 +16,9 @@ int vtfs_open(struct inode *inode, struct file *filp)
   if (!n || n->is_dir)
     return -EISDIR;
 
+  if (!n->file || atomic_read(&n->file->nlink) == 0)
+    return -ENOENT;
+
   filp->private_data = n;
 
   if (filp->f_flags & O_TRUNC) {
@@ -28,7 +28,11 @@ int vtfs_open(struct inode *inode, struct file *filp)
       n->file->size = 0;
       n->file->cap = 0;
     }
+    vtfs_push_truncate(n->ino, 0);
     filp->f_pos = 0;
+    
+    i_size_write(inode, 0);
+    inode->i_blocks = 0;
   }
 
   return 0;
@@ -119,7 +123,6 @@ ssize_t vtfs_write(struct file *filp, const char __user *buffer, size_t len, lof
 
   while (done < len) {
     size_t chunk = min_t(size_t, len - done, VTFS_CHUNK);
-    size_t i;
     int pr;
 
     if (copy_from_user(tmp, buffer + done, chunk)) {
@@ -128,15 +131,12 @@ ssize_t vtfs_write(struct file *filp, const char __user *buffer, size_t len, lof
       return -EFAULT;
     }
 
-    for (i = 0; i < chunk; i++) {
-      if ((unsigned char)tmp[i] > 127) {
-        kfree(tmp);
-        kfree(encoded);
-        return -EINVAL;
-      }
-    }
-
     memcpy(f->data + (size_t)*offset + done, tmp, chunk);
+
+    encode(tmp, encoded);
+    pr = vtfs_push_write(n->ino, (size_t)*offset + done, encoded, strlen(encoded));
+    if (pr)
+      LOG("push write failed: %d\n", pr);
 
     done += chunk;
   }
@@ -144,9 +144,18 @@ ssize_t vtfs_write(struct file *filp, const char __user *buffer, size_t len, lof
   kfree(tmp);
   kfree(encoded);
 
-  if (endpos > f->size)
+  if (endpos > f->size) {
     f->size = endpos;
+    i_size_write(filp->f_inode, f->size);
+  }
 
   *offset += len;
+
+  filp->f_inode->i_blocks = (f->size + VTFS_BLOCK_SIZE - 1) >> VTFS_BLOCK_SHIFT;
+
+  LOG("write: size=%zu, i_size=%lld, blocks=%llu\n", 
+      f->size, (long long)filp->f_inode->i_size,
+      (unsigned long long)filp->f_inode->i_blocks);
+
   return (ssize_t)len;
 }

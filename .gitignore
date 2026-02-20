@@ -1,0 +1,17 @@
+.vscode/*
+
+# Linux kernel module
+*.mod.cmd
+*.mod.o.cmd
+*.ko.cmd
+*.o.cmd
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+*.o
+.Module.symvers.cmd
+.modules.order.cmd
+Module.symvers
+modules.order
+
